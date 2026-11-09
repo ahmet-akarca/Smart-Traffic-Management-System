@@ -122,8 +122,11 @@
 		<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 		<script>
 			//<![CDATA[
-        var map = L.map('map', { maxZoom: 24 }).setView([40.985, 28.715], 19);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 24, maxNativeZoom: 19 }).addTo(map);
+        var map = L.map('map', { maxZoom: 24 }).setView([41.013220, 28.535365], 19);
+        L.tileLayer('YerelHarita/{z}/{x}/{y}.png', { 
+        maxZoom: 19, // Kullanıcının ekranda yaklaşabileceği maksimum seviye
+        maxNativeZoom: 16 // Elimizdeki klasörde bulunan en yüksek seviye
+        }).addTo(window.map);
 
         var seritlerLayer = L.layerGroup().addTo(map);
         var tempLayer = L.layerGroup().addTo(map); 
