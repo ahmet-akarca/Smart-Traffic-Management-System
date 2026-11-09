@@ -1,0 +1,12 @@
+# C# Derleme Klasörleri
+[Bb]in/
+[Oo]bj/
+
+# Python Önbellek ve Model/Video Dosyaları
+__pycache__/
+*.mp4
+*.pt
+
+# Node/React Native Modülleri (Varsa)
+node_modules/
+.vs/

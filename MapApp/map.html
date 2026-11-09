@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Leaflet Harita</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+		<style>
+			body { margin: 0; padding: 0; overflow: hidden; }
+			#map { height: 100vh; width: 100vw; }
+			.leaflet-container { cursor: crosshair !important; }
+
+			#infoPanel {
+			position: absolute;
+			top: 20px;
+			right: -370px;
+			width: 340px;
+			background-color: rgba(28, 28, 30, 0.95);
+			color: #ecf0f1;
+			border: 1px solid #3a3a3c;
+			border-radius: 12px;
+			font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+			box-shadow: 0px 10px 30px rgba(0,0,0,0.6);
+			z-index: 1000;
+			transition: right 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+			display: flex;
+			flex-direction: column;
+			pointer-events: auto;
+			}
+
+			#infoPanel.visible { right: 20px; }
+
+			.panel-header {
+			padding: 15px;
+			background: rgba(44, 44, 46, 0.9);
+			border-top-left-radius: 12px;
+			border-top-right-radius: 12px;
+			border-bottom: 1px solid #3a3a3c;
+			}
+
+			.panel-content {
+			padding: 15px;
+			max-height: 500px;
+			overflow-y: auto;
+			}
+
+			.panel-content::-webkit-scrollbar { width: 6px; }
+			.panel-content::-webkit-scrollbar-track { background: transparent; }
+			.panel-content::-webkit-scrollbar-thumb { background: #5e5e60; border-radius: 3px; }
+
+			.levha-item {
+			background: #2c2c2e; margin-bottom: 8px; padding: 10px;
+			border-radius: 8px; display: flex; align-items: center;
+			}
+
+			.btn-duzenle {
+			width: 100%; margin-top: 15px; padding: 10px;
+			background-color: #007bff; color: white; border: none;
+			border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px;
+			transition: background-color 0.2s;
+			}
+			.btn-duzenle:hover { background-color: #0056b3; }
+
+			.flow-line {
+			stroke-dasharray: 8, 8;
+			animation: flow 0.5s linear infinite;
+			}
+			@keyframes flow {
+			from { stroke-dashoffset: 16; }
+			to { stroke-dashoffset: 0; }
+			}
+			.marker-icon { font-size: 20px; text-align: center; }
+
+			/* SCADA Acil Durum Uyarı Banner'ı */
+			#emergencyBanner {
+			position: absolute;
+			top: 30px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: rgba(255, 38, 0, 0.95);
+			color: white;
+			padding: 15px 40px;
+			border-radius: 12px;
+			font-size: 26px;
+			font-weight: 900;
+			letter-spacing: 2px;
+			box-shadow: 0 0 25px rgba(255, 0, 0, 0.8);
+			z-index: 9999;
+			text-align: center;
+			animation: flashWarning 0.8s infinite alternate;
+			pointer-events: none;
+			display: none;
+			border: 2px solid #fff;
+			}
+
+			@keyframes flashWarning {
+			from { background-color: rgba(255, 38, 0, 0.95); box-shadow: 0 0 25px rgba(255,0,0,0.8); }
+			to { background-color: rgba(200, 0, 0, 0.95); box-shadow: 0 0 50px rgba(255,0,0,1); }
+			}
+
+			/* --- YENİ EKLENEN: Tepe Lambası (Siren Çakar) Animasyonu --- */
+			.emergency-flash {
+			animation: sirenStrobe 0.4s infinite !important;
+			}
+
+			@keyframes sirenStrobe {
+			0%, 49% { fill: #ff0000 !important; stroke: #ff0000 !important; }
+			50%, 100% { fill: #0055ff !important; stroke: #0055ff !important; }
+			}
+		</style>
+	</head>
+	<body>
+		<div id="map"></div>
+
+		<div id="infoPanel">
+			<div id="panelHeader" class="panel-header">Bilgi Bekleniyor...</div>
+			<div id="panelContent" class="panel-content">Lütfen bir şeridin üzerine gelin.</div>
+		</div>
+
+		<div id="emergencyBanner">🚨 DİKKAT: GEÇİŞ ÜSTÜNLÜĞÜ 🚨</div>
+
+		<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+		<script>
+			//<![CDATA[
+        var map = L.map('map', { maxZoom: 24 }).setView([40.985, 28.715], 19);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 24, maxNativeZoom: 19 }).addTo(map);
+
+        var seritlerLayer = L.layerGroup().addTo(map);
+        var tempLayer = L.layerGroup().addTo(map); 
+        var baglantiCizgileri = L.layerGroup().addTo(map); 
+        
+        var guncelNoktalar = []; 
+        var cizilenSeritler = {}; 
+
+        var sistemAcilDurum = false;
+        var sistemAracTipi = "YOK";
+        var sistemAcilSeritId = "";
+        var hoverYapilanSeritId = "";
+        
+        var sirenInterval = null;
+        var sirenDurumuMavi = true; 
+
+        var infoPanel = document.getElementById('infoPanel');
+        var panelHeader = document.getElementById('panelHeader');
+        var panelContent = document.getElementById('panelContent');
+        var hideTimeout;
+
+        infoPanel.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+        infoPanel.addEventListener('mouseleave', () => {
+            hideTimeout = setTimeout(() => infoPanel.classList.remove('visible'), 300);
+        });
+
+        function BannerGorunurlukKontrol() {
+            var emergencyBanner = document.getElementById('emergencyBanner');
+            
+            if (sistemAcilDurum && hoverYapilanSeritId !== "") {
+                var gosterilecek = false;
+                
+                if (hoverYapilanSeritId === sistemAcilSeritId) {
+                    gosterilecek = true;
+                } else {
+                    var acilPoly = cizilenSeritler[sistemAcilSeritId];
+                    if (acilPoly) {
+                        if (acilPoly.oncekiler && acilPoly.oncekiler.includes(hoverYapilanSeritId)) gosterilecek = true;
+                        if (acilPoly.sonrakiler && acilPoly.sonrakiler.includes(hoverYapilanSeritId)) gosterilecek = true;
+                    }
+                }
+
+                if (gosterilecek) {
+                    var ikon = sistemAracTipi === "ITFAIYE" ? "🚒" : "🚑";
+                    emergencyBanner.innerHTML = `${ikon} DİKKAT: MUTLAK GEÇİŞ ÜSTÜNLÜĞÜ (${sistemAracTipi}) ${ikon}`;
+                    emergencyBanner.style.display = "block";
+                    return;
+                }
+            }
+            
+            emergencyBanner.style.display = "none";
+        }
+
+        function DuzenleButonunaTiklandi(seritId) {
+            var mesaj = { type: "editLane", id: seritId };
+            window.chrome.webview.postMessage(mesaj);
+        }
+
+        function HaritadanSeritSil(seritId) {
+            if(cizilenSeritler[seritId]) {
+                seritlerLayer.removeLayer(cizilenSeritler[seritId]);
+                delete cizilenSeritler[seritId];
+                baglantiCizgileri.clearLayers(); 
+                infoPanel.classList.remove('visible');
+            }
+        }
+
+        function HaritadakiSeridiGuncelle(eskiId, yeniId, yeniIsim, yeniIsikModu, yeniHava, yeniLevhalar, yeniOncekiler, yeniSonrakiler) {
+            if(cizilenSeritler[eskiId]) {
+                var poly = cizilenSeritler[eskiId];
+                
+                poly.oncekiler = yeniOncekiler || [];
+                poly.sonrakiler = yeniSonrakiler || [];
+                poly.options.oncekiler = poly.oncekiler;
+                poly.options.sonrakiler = poly.sonrakiler;
+
+                if(eskiId !== yeniId) {
+                    cizilenSeritler[yeniId] = poly;
+                    delete cizilenSeritler[eskiId];
+                    poly.seritId = yeniId;
+                }
+                
+                poly.seritIsmi = yeniIsim;
+                poly.isikModu = yeniIsikModu;
+                poly.havaDurumu = yeniHava;
+                poly.levhalarListesi = yeniLevhalar;
+                
+                var cizimRengi = 'gray'; 
+                if(yeniIsikModu === 1) cizimRengi = '#32d74b'; 
+                if(yeniIsikModu === 2) cizimRengi = '#ffd60a'; 
+                if(yeniIsikModu === 3) cizimRengi = '#ff453a'; 
+                if(yeniIsikModu !== 0) {
+                    poly.setStyle({ color: cizimRengi, fillColor: cizimRengi, fillOpacity: 0.6 });
+                }
+                
+                PaneliDoldurVeGoster(poly, poly.sonAracSayisi);
+            }
+        }
+
+        function hesaplaZincirYogunlugu(baslangicId, visited = new Set(), derinlik = 3) {
+            let toplam = 0;
+            let detaylar = [];
+            let baslangicPoly = cizilenSeritler[baslangicId];
+            
+            if (!baslangicPoly || !baslangicPoly.oncekiler) return { toplam: 0, detaylar: [] };
+
+            baslangicPoly.oncekiler.forEach(oid => {
+                if (!visited.has(oid)) {
+                    visited.add(oid);
+                    let hedefPoly = cizilenSeritler[oid];
+                    let arac = (hedefPoly && hedefPoly.sonAracSayisi !== -1) ? hedefPoly.sonAracSayisi : 0;
+                    toplam += arac;
+                    
+                    let kisaId = oid.length > 6 ? oid.substring(oid.length - 6) : oid;
+                    detaylar.push(`<div style="color:#00d2d3; font-size:12px; margin-left:10px; margin-top:2px;">↳ ID ...${kisaId} şeridinden: <span style="color:#ffd60a; font-weight:bold;">${arac} Araç</span></div>`);
+
+                    if (derinlik > 1) {
+                        let altSonuc = hesaplaZincirYogunlugu(oid, visited, derinlik - 1);
+                        toplam += altSonuc.toplam;
+                        detaylar = detaylar.concat(altSonuc.detaylar);
+                    }
+                }
+            });
+            return { toplam, detaylar };
+        }
+
+        function PaneliDoldurVeGoster(poly, aracSayisi) {
+            clearTimeout(hideTimeout);
+            
+            var gosterilenId = (poly.isikModu === 0) ? poly.seritId : "MANUEL KONTROL";
+            var kendiAracSayisi = aracSayisi === -1 ? 0 : aracSayisi;
+            var aracMetni = aracSayisi === -1 ? "Yapay Zeka Sayım Bekleniyor..." : `🚗 Anlık Araç: <span style='color:#ffd60a; font-size:18px;'>${kendiAracSayisi}</span>`;
+            
+            panelHeader.innerHTML = `
+                <div style="font-size:18px; color:#0a84ff; font-weight:bold;">${poly.seritIsmi}</div>
+                <div style="color:#30d158; font-size:12px; margin-top:2px;">ID: ${gosterilenId}</div>
+            `;
+
+            let levhalarHtml = "";
+            let levhaEtkisi = 0;
+            if(!poly.levhalarListesi || poly.levhalarListesi.length === 0) {
+                levhalarHtml = `<div style="color:#8e8e93; font-style:italic;">Bu şeride levha tanımlanmamış.</div>`;
+            } else {
+                poly.levhalarListesi.forEach(l => {
+                    levhaEtkisi += l.Sure;
+                    let sureRenk = l.Sure > 0 ? "#ff453a" : (l.Sure < 0 ? "#32d74b" : "#8e8e93");
+                    let sureYazisi = l.Sure > 0 ? `+${l.Sure}sn` : `${l.Sure}sn`;
+                    levhalarHtml += `
+                    <div class="levha-item">
+                        <span style="font-size:28px; margin-right:15px;">${l.Ikon}</span>
+                        <div>
+                            <div style="font-weight:bold; font-size:14px;">${l.Ad}</div>
+                            <div style="font-size:12px; color:${sureRenk};">Işık Süresi Etkisi: ${sureYazisi}</div>
+                        </div>
+                    </div>`;
+                });
+            }
+
+            let zincirVerisi = hesaplaZincirYogunlugu(poly.seritId);
+            let zincirSuresi = zincirVerisi.toplam * 1.5;
+            let kendiAracSuresi = kendiAracSayisi * 2.0;
+            
+            let havaCarpani = 1.0;
+            if(poly.havaDurumu.includes("Yağmurlu") || poly.havaDurumu.includes("Yagmurlu")) havaCarpani = 1.2;
+            else if(poly.havaDurumu.includes("Karlı") || poly.havaDurumu.includes("Karli")) havaCarpani = 1.5;
+            else if(poly.havaDurumu.includes("Sisli")) havaCarpani = 1.3;
+
+            let tabanSure = 5.0;
+            let carpanliTaban = (tabanSure + levhaEtkisi) * havaCarpani;
+            let toplamSure = carpanliTaban + kendiAracSuresi + zincirSuresi;
+
+            let zincirDetayHtml = zincirVerisi.detaylar.length > 0 ? zincirVerisi.detaylar.join('') : `<div style="color:#8e8e93; font-size:12px; margin-left:10px;">↳ Bağlı şerit yok veya boş.</div>`;
+
+            let hesaplamaWidget = `
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #3a3a3c;">
+                    <div style="color:#0a84ff; font-weight:bold; margin-bottom:10px; font-size:14px; text-align:center;">🧮 SÜRE HESAPLAMA ÖZETİ</div>
+                    
+                    <div style="font-size:13px; line-height:1.8;">
+                        <div style="display:flex; justify-content:space-between; color:#d1d1d6;"><span>Taban Süre:</span> <span>5.0s</span></div>
+                        <div style="display:flex; justify-content:space-between; color:#d1d1d6;"><span>Levha Etkisi:</span> <span>${levhaEtkisi >= 0 ? '+' : ''}${levhaEtkisi}s</span></div>
+                        <div style="display:flex; justify-content:space-between; color:#ff9f0a;"><span>Hava Çarpanı:</span> <span>x${havaCarpani}</span></div>
+                        
+                        <div style="border-top: 1px dashed #5e5e60; margin: 6px 0;"></div>
+                        
+                        <div style="display:flex; justify-content:space-between; color:#32d74b;">
+                            <span>Kendi Trafiği (${kendiAracSayisi} Araç):</span> 
+                            <span style="font-weight:bold;">+${kendiAracSuresi.toFixed(1)}s</span>
+                        </div>
+                        
+                        <div style="display:flex; justify-content:space-between; color:#00d2d3; margin-top:4px;">
+                            <span>Zincir Trafiği (${zincirVerisi.toplam} Araç):</span> 
+                            <span style="font-weight:bold;">+${zincirSuresi.toFixed(1)}s</span>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; margin-top: 2px;">
+                            ${zincirDetayHtml}
+                        </div>
+                        
+                        <div style="border-top: 1px solid #5e5e60; margin: 8px 0;"></div>
+                        
+                        <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:16px; color:#fff;">
+                            <span>💡 HEDEF SÜRE:</span> 
+                            <span style="color:#32d74b;">${toplamSure.toFixed(1)}s</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            panelContent.innerHTML = `
+                <div style="margin-bottom: 15px; font-weight:bold;">${aracMetni}</div>
+                <div style="color:#ff9f0a; font-weight:bold; margin-bottom:10px;">${poly.havaDurumu}</div>
+                ${levhalarHtml}
+                ${hesaplamaWidget}
+                <button onclick="DuzenleButonunaTiklandi('${poly.seritId}')" class="btn-duzenle">
+                    ✏️ Düzenle / Sil
+                </button>
+            `;
+
+            infoPanel.classList.add('visible');
+        }
+
+        function BaglantilariGoster(anaSeritId) {
+            baglantiCizgileri.clearLayers(); 
+            var anaSerit = cizilenSeritler[anaSeritId];
+            if (!anaSerit) return;
+
+            var merkez = anaSerit.getBounds().getCenter();
+
+            if (anaSerit.sonrakiler) {
+                anaSerit.sonrakiler.forEach(hedefId => {
+                    var hedefSerit = cizilenSeritler[hedefId];
+                    if (hedefSerit) {
+                        var hedefMerkez = hedefSerit.getBounds().getCenter();
+                        L.polyline([merkez, hedefMerkez], { color: '#ff9f43', weight: 4, className: 'flow-line' }).addTo(baglantiCizgileri);
+                        L.marker(merkez, { icon: L.divIcon({ className: 'marker-icon', html: '🔴' }) }).addTo(baglantiCizgileri);
+                        L.marker(hedefMerkez, { icon: L.divIcon({ className: 'marker-icon', html: '🏁' }) }).addTo(baglantiCizgileri);
+                    }
+                });
+            }
+
+            if (anaSerit.oncekiler) {
+                anaSerit.oncekiler.forEach(kaynakId => {
+                    var kaynakSerit = cizilenSeritler[kaynakId];
+                    if (kaynakSerit) {
+                        var kaynakMerkez = kaynakSerit.getBounds().getCenter();
+                        L.polyline([kaynakMerkez, merkez], { color: '#00d2d3', weight: 4, className: 'flow-line' }).addTo(baglantiCizgileri);
+                        L.marker(kaynakMerkez, { icon: L.divIcon({ className: 'marker-icon', html: '🔴' }) }).addTo(baglantiCizgileri);
+                        L.marker(merkez, { icon: L.divIcon({ className: 'marker-icon', html: '🏁' }) }).addTo(baglantiCizgileri);
+                    }
+                });
+            }
+        }
+
+        function GeciciCizimiGuncelle() {
+            tempLayer.clearLayers();
+            guncelNoktalar.forEach(function(nokta) { L.circleMarker(nokta, {color: 'red', radius: 4}).addTo(tempLayer); });
+            if (guncelNoktalar.length > 1) L.polyline(guncelNoktalar, {color: 'red', dashArray: '5, 5'}).addTo(tempLayer);
+        }
+
+        map.on('click', function(e) { 
+            baglantiCizgileri.clearLayers();
+            guncelNoktalar.push(e.latlng); 
+            GeciciCizimiGuncelle(); 
+        });
+
+        document.addEventListener('keydown', function(e) { 
+            if (e.ctrlKey && e.key.toLowerCase() === 'z') { 
+                if (guncelNoktalar.length > 0) { 
+                    guncelNoktalar.pop(); 
+                    GeciciCizimiGuncelle(); 
+                } 
+            } 
+        });
+
+        map.on('contextmenu', function(e) {
+            if (guncelNoktalar.length >= 3) { 
+                var kordinatVerisi = { type: "drawPolygon", points: guncelNoktalar };
+                window.chrome.webview.postMessage(kordinatVerisi);
+                guncelNoktalar = []; tempLayer.clearLayers();
+            } else { 
+                baglantiCizgileri.clearLayers();
+                guncelNoktalar = []; tempLayer.clearLayers();
+            }
+        });
+
+        function HaritayaCokgenCiz(seritId, seritIsmi, isikModu, hava, levhalarListesi, pointsArray, oncekiler, sonrakiler) {
+            var cizimRengi = 'gray'; 
+            if(isikModu === 1) cizimRengi = '#32d74b'; 
+            if(isikModu === 2) cizimRengi = '#ffd60a'; 
+            if(isikModu === 3) cizimRengi = '#ff453a'; 
+
+            var polygon = L.polygon(pointsArray, { color: cizimRengi, weight: 3, fillColor: cizimRengi, fillOpacity: 0.6 });
+            
+            polygon.seritId = seritId; polygon.seritIsmi = seritIsmi; polygon.isikModu = isikModu; 
+            polygon.havaDurumu = hava; polygon.levhalarListesi = levhalarListesi; polygon.sonAracSayisi = -1;
+            polygon.oncekiler = oncekiler || []; polygon.sonrakiler = sonrakiler || []; 
+
+            polygon.on('mouseover', function() { 
+                hoverYapilanSeritId = polygon.seritId; 
+                PaneliDoldurVeGoster(polygon, polygon.sonAracSayisi); 
+                BannerGorunurlukKontrol(); 
+            });
+            polygon.on('mouseout', function() {
+                hoverYapilanSeritId = ""; 
+                hideTimeout = setTimeout(() => infoPanel.classList.remove('visible'), 300);
+                BannerGorunurlukKontrol(); 
+            });
+            
+            polygon.on('click', function(e) {
+                L.DomEvent.stopPropagation(e); 
+                BaglantilariGoster(polygon.seritId);
+            });
+            
+            seritlerLayer.addLayer(polygon);
+            cizilenSeritler[seritId] = polygon;
+        }
+
+        function TopluSeritYukle(seritlerListesi) {
+            baglantiCizgileri.clearLayers(); 
+            seritlerLayer.clearLayers();     
+            cizilenSeritler = {};            
+            infoPanel.classList.remove('visible'); 
+
+            if(seritlerListesi && seritlerListesi.length > 0) {
+                seritlerListesi.forEach(function(s) {
+                    var mod = s.IsikModu !== undefined ? s.IsikModu : 0;
+                    var hava = s.HavaDurumu || "☀️ Güneşli";
+                    var levhalar = s.Levhalar || [];
+                    var oncekiler = s.OncekiSeritler || [];
+                    var sonrakiler = s.SonrakiSeritler || [];
+                    HaritayaCokgenCiz(s.Id, s.Isim, mod, hava, levhalar, s.Noktalar, oncekiler, sonrakiler);
+                });
+            }
+        }
+
+        // --- YENİ EKLENEN: C#'tan gelen sıfırlama (Watchdog) komutunu karşılayan fonksiyon ---
+        function BaglantiKoptuSifirla() {
+            sistemAcilDurum = false;
+            sistemAracTipi = "YOK";
+            sistemAcilSeritId = "";
+            BannerGorunurlukKontrol();
+            
+            if (sirenInterval) {
+                clearInterval(sirenInterval);
+                sirenInterval = null;
+            }
+
+            Object.values(cizilenSeritler).forEach(function(poly) {
+                if (poly.isikModu === 0) {
+                    poly.setStyle({ color: '#808080', fillColor: '#808080', fillOpacity: 0.6 });
+                    // Leaflet sınıflarını (tıklanabilirliği) bozmadan sadece animasyonu sil
+                    if (poly._path) {
+                        poly._path.classList.remove('emergency-flash');
+                    }
+                }
+                poly.sonAracSayisi = -1; // -1 değeri arayüzde "Sayım Bekleniyor" yazdırır
+                
+                if(infoPanel.classList.contains('visible') && panelHeader.innerHTML.includes(poly.seritId)) {
+                    PaneliDoldurVeGoster(poly, -1);
+                }
+            });
+        }
+
+        function TopluCanliVeriGuncelle(data) {
+            if (data) {
+                sistemAcilDurum = data.acil_durum_var_mi || false;
+                sistemAracTipi = data.arac_tipi || "YOK";
+                
+                if (sistemAcilDurum && data.lanes) {
+                    var acilLane = data.lanes.find(l => l.color === "#00FF00");
+                    if (acilLane) {
+                        sistemAcilSeritId = acilLane.id;
+                    }
+                } else {
+                    sistemAcilSeritId = "";
+                }
+            }
+
+            BannerGorunurlukKontrol();
+
+            if (sistemAcilDurum && sistemAcilSeritId !== "") {
+                if (!sirenInterval) {
+                    sirenDurumuMavi = true;
+                    sirenInterval = setInterval(function() {
+                        var poly = cizilenSeritler[sistemAcilSeritId];
+                        if (poly) {
+                            var renk = sirenDurumuMavi ? '#0055ff' : '#ff0000'; 
+                            poly.setStyle({ color: renk, fillColor: renk, fillOpacity: 0.8 });
+                            sirenDurumuMavi = !sirenDurumuMavi;
+                        }
+                    }, 250); 
+                }
+            } else {
+                if (sirenInterval) {
+                    clearInterval(sirenInterval);
+                    sirenInterval = null;
+                }
+            }
+
+            if(data && data.lanes) {
+                data.lanes.forEach(function(lane) {
+                    if(cizilenSeritler[lane.id]) {
+                        var poly = cizilenSeritler[lane.id];
+                        
+                        if(poly.isikModu === 0) {
+                            // Çakar olan şeride karışma ki JS zamanlayıcısı çalışabilsin
+                            if (sistemAcilDurum && lane.id === sistemAcilSeritId) {
+                                if (poly._path && !poly._path.classList.contains('emergency-flash')) {
+                                    poly._path.classList.add('emergency-flash');
+                                }
+                            } else {
+                                // Çakar olmayan normal şeritler
+                                poly.setStyle({ color: lane.color, fillColor: lane.color, fillOpacity: 0.6 });
+                                if (poly._path) {
+                                    poly._path.classList.remove('emergency-flash');
+                                }
+                            }
+                        }
+                        poly.sonAracSayisi = lane.count;
+                        
+                        if(infoPanel.classList.contains('visible') && panelHeader.innerHTML.includes(poly.seritId)) {
+                            PaneliDoldurVeGoster(poly, lane.count);
+                        }
+                    }
+                });
+            }
+        }
+        //]]>
+		</script>
+	</body>
+</html>
