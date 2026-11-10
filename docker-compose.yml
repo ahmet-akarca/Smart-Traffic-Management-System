@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # --- BİRİNCİ KAMERA MOTORU ---
+  yapay-zeka-kamera1:
+    image: otonom_scada_kalibi  # Ortak fabrika ismi
+    build: .
+    container_name: otonom_scada_ai_motor_1
+    profiles: ["kameraKavsak"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - USE_NNPACK=0
+    # YENİ YOL: Doğrudan yanındaki MapApp klasörünün içindeki Debug hedefleniyor!
+    volumes:
+      - "./MapApp/MapApp/bin/Debug/net8.0-windows:/veri"
+    command: >
+      python trafikIsigiKontrolSistemi.py 
+      --camera KAMERA_1 
+      --video "/veri/4corner2.mp4" 
+      --data_dir "/veri"
+
+  # --- İKİNCİ KAMERA MOTORU (İTFAİYE) ---
+  yapay-zeka-kamera2:
+    image: otonom_scada_kalibi
+    build: .
+    container_name: otonom_scada_ai_itfaiye
+    profiles: ["kameraItfaiye"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - USE_NNPACK=0
+    volumes:
+      - "./MapApp/MapApp/bin/Debug/net8.0-windows:/veri"
+    command: >
+      python trafikIsigiKontrolSistemi.py 
+      --camera KAMERA_2 
+      --video "/veri/itfaiyeVid1.mp4" 
+      --data_dir "/veri"
+
+  # --- UCUNCU KAMERA MOTORU (AMBULANS) ---
+  yapay-zeka-kamera3:
+    image: otonom_scada_kalibi
+    build: .
+    container_name: otonom_scada_ai_motor_ambulans
+    profiles: ["kameraAmbulans"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - USE_NNPACK=0
+    volumes:
+      - "./MapApp/MapApp/bin/Debug/net8.0-windows:/veri"
+    command: >
+      python trafikIsigiKontrolSistemi.py 
+      --camera KAMERA_3 
+      --video "/veri/ambVid21.mp4" 
+      --data_dir "/veri"
+
+  # --- DORDUNCU KAMERA MOTORU (TAI) ---
+  yapay-zeka-kamera4:
+    image: otonom_scada_kalibi
+    build: .
+    container_name: otonom_scada_ai_motor_tai
+    profiles: ["kameraTaiKavsak"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - USE_NNPACK=0
+    volumes:
+      - "./MapApp/MapApp/bin/Debug/net8.0-windows:/veri"
+    command: >
+      python trafikIsigiKontrolSistemi.py 
+      --camera KAMERA_4 
+      --video "/veri/tayi2.mp4" 
+      --data_dir "/veri"
